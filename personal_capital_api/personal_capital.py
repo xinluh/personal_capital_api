@@ -6,7 +6,7 @@ import re
 import os
 from pathlib import Path
 import pickle
-from typing import Mapping
+from typing import Mapping, List
 import logging
 
 
@@ -18,18 +18,19 @@ _ROOT_URL = 'https://home.personalcapital.com'
 
 # Caching cookies from successful login session to avoid 2-factor verification in the future
 _CACHE_PATH = '~/.cache/personal_capital_api'
-_CACHE_VERSION = 0
+_CACHE_VERSION = 1
 
 
 class PersonalCapital():
-    def __init__(self, load_from_cache=True):
+    def __init__(self, use_cookies_cache=True):
         self._csrf = None
+        self._use_cookies_cache = use_cookies_cache
 
         cookies = None
-        if load_from_cache:
+        if use_cookies_cache:
             cookies = self._load_cookies_from_cache()
             if cookies is not None:
-                logger.debug(f'Loaded cookies from cache: {[c["name"] for c in cookies]}')
+                logger.debug(f'Loaded cookies from cache: {cookies.items()}')
 
         self._init_session(cookies)
 
@@ -56,7 +57,7 @@ class PersonalCapital():
 
         return json_res
 
-    def is_logged_in(self):
+    def is_logged_in(self) -> bool:
         if self._csrf is None:
             return False
 
@@ -66,7 +67,7 @@ class PersonalCapital():
         except PersonalCapitalSessionExpiredException:
             return False
 
-    def get_transactions(self, start_date='2007-01-01', end_date='2030-01-01') -> Mapping:
+    def get_transactions(self, start_date='2007-01-01', end_date='2030-01-01') -> List[Mapping]:
         resp = self.api_request('post',
                                 path='/api/transaction/getUserTransactions',
                                 data={'startDate': start_date, 'endDate': end_date})
@@ -79,9 +80,59 @@ class PersonalCapital():
         return resp['spData']
 
     def login(self, email, password,
+                 auth_method='sms',
+                 get_two_factor_code_func=lambda: getpass.getpass("Enter 2 factor code: ")) -> 'PersonalCapital':
+        """
+        Login using API calls. If this doesn't work, try login_via_browser().
+
+        You should run this function interactively at least once so you can supply the 2 factor authentication
+        code interactively.
+        """
+        if auth_method not in ('sms', 'email'):
+            raise ValueError(f'Auth method {auth_method} is not supported')
+
+        self._csrf = re.search("csrf *= *'([-a-z0-9]+)'", self.session.get(_ROOT_URL).text).groups()[0]
+
+        resp = self.api_request('post', '/api/login/identifyUser', {'username': email})
+
+        # update to the new csrf
+        self._csrf = resp.get('spHeader', {}).get('csrf')
+
+        if resp.get('spHeader', {}).get('authLevel') != 'USER_REMEMBERED':
+            self.api_request('post', '/api/credential/challenge' + ('Sms' if auth_method == 'sms' else 'Email'), {
+                "challengeReason": "DEVICE_AUTH",
+                "challengeMethod": "OP",
+                "bindDevice": "false",
+                "challengeType": 'challengeSMS' if auth_method == 'sms' else 'challengeEmail',
+            })
+
+            two_factor_code = get_two_factor_code_func()
+
+            self.api_request('post', '/api/credential/authenticateSms' if auth_method == 'sms' else '/api/credential/authenticateEmailByCode', {
+                "challengeReason": "DEVICE_AUTH",
+                "challengeMethod": "OP",
+                "bindDevice": "false",
+                "code": two_factor_code,
+            })
+
+        self.api_request('post', '/api/credential/authenticatePassword', {
+            "bindDevice": "true", "deviceName": "API script", "passwd": password,})
+
+        self._email = email
+
+        if self._use_cookies_cache:
+            self._cache_cookies()
+
+        return self
+
+    def login_via_browser(self, email, password,
               get_two_factor_code_func=lambda: getpass.getpass("Enter 2 factor code sent to your text: "),
               debug=False) -> 'PersonalCapital':
-        """Use selenium to get login cookies and token.
+        """
+        Login by emulating a brower. The regular login() should work faster with less dependency, but this may be helpful
+        if login() doesn't work.
+
+        Depends on Selenium and ChromeDriver.
 
         You should run this function interactively at least once so you can supply the 2 factor authentication
         code interactively.
@@ -182,9 +233,12 @@ class PersonalCapital():
 
             logger.debug('Current page title: ' + driver.title)
 
-        cookies = driver.get_cookies()
-        self._set_requests_cookies(cookies)
-        self._cache_cookies(cookies)
+        for cookie_json in driver.get_cookies():
+            self.session.cookies.set(**{k: v for k, v in cookie_json.items()
+                                        if k not in ['httpOnly', 'expiry', 'expires', 'domain', 'sameSite']})
+
+        if self._use_cookies_cache:
+            self._cache_cookies()
 
         if not debug:
             driver.close()
@@ -202,7 +256,7 @@ class PersonalCapital():
             if cached['version'] == _CACHE_VERSION:
                 return cached['cookies']
 
-    def _cache_cookies(self, cookies):
+    def _cache_cookies(self):
         cache_dir = Path(_CACHE_PATH).expanduser()
         cache_dir.mkdir(exist_ok=True, parents=True)
         cache_file = cache_dir / 'cached_cookies.pkl'
@@ -211,22 +265,18 @@ class PersonalCapital():
             logger.info(f'Caching cookies to file {cache_file}')
             pickle.dump({
                 'version': _CACHE_VERSION,
-                'cookies': cookies,
+                'cookies': self.session.cookies,
                 'email': self._email,
             }, f)
-
-    def _set_requests_cookies(self, cookies_from_selenium):
-        for cookie_json in cookies_from_selenium:
-            self.session.cookies.set(**{k: v for k, v in cookie_json.items()
-                                        if k not in ['httpOnly', 'expiry', 'expires', 'domain', 'sameSite']})
 
     def _init_session(self, cookies=None):
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': _USER_AGENT})
 
         if cookies:
-            self._set_requests_cookies(cookies)
+            self.session.cookies = cookies
 
 
 class PersonalCapitalSessionExpiredException(RuntimeError):
     pass
+

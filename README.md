@@ -5,8 +5,7 @@ A minimalistic wrapper to Personal Capital / Empower Dashboard API. Currently wo
 ## Requirements
 
 - Python 3.6+
-- Only real dependency is `requests`
-- For automated login, `selenium` and Chrome / [ChromeDriver](https://chromedriver.chromium.org/) are required. Alternatively, logging in can be achieved from grabbing data from a logged-in browser session.
+- Only dependency is `requests`
 
 ## Installation
 ```
@@ -21,20 +20,11 @@ Or add to `requirements.txt` or `pyproject.toml` etc. depending on your package 
 from personal_capital_api import PersonalCapital
 
 # will prompt for 2-factor login code that will be sent to text
-pc = PersonalCapital().login(email, password)
+pc = PersonalCapital().login(email, password, auth_method='sms')
 ```
-You should run this at least once interactively so you can enter the 2-factor code manually. After the first successful login, the cookies will be cached in ~/.cache and reloaded automatically next time, so likely you will only deal with 2-factor prompt only once.
+You should run this at least once interactively so you can enter the 2-factor code manually.
 
-Currently only the texting 2-factor method is supported (but easy to add support for other methods!).
-
-Alternatively, logging in using an existent browser session with no selenium dependency:
-```python
-from personal_capital_api import PersonalCapital
-pc = PersonalCapital()
-pc._csrf = ... # find this value by looking at the html source file of any page after you logged in the browser.
-# for each cookie in browser session
-pc.session.cookies[...] = ...
-```
+After the first successful login, the cookies will be cached in `~/.cache/personal_capital_api` and reloaded automatically next time, so likely you will only deal with 2-factor prompt only once. If you don't want this behavior, initiate the class with `PersonalCapital(use_cookies_cache=False)`.
 
 ### Get account information
 ```python
