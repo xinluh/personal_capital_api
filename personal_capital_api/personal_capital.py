@@ -25,6 +25,7 @@ class PersonalCapital():
     def __init__(self, use_cookies_cache=True):
         self._csrf = None
         self._use_cookies_cache = use_cookies_cache
+        self._last_server_change_id = -1
 
         cookies = None
         if use_cookies_cache:
@@ -38,7 +39,7 @@ class PersonalCapital():
         response = self.session.request(
             method=method,
             url=os.path.join(_ROOT_URL, path.lstrip('/')),
-            data={**data, "csrf": self._csrf, "apiClient": 'WEB'})
+            data={**data, "csrf": self._csrf, "apiClient": 'WEB', "lastServerChangeId": self._last_server_change_id})
         resp_txt = response.text
 
         is_json_resp = re.match('text/json|application/json', response.headers.get('content-type', ''))
@@ -66,6 +67,12 @@ class PersonalCapital():
             return True
         except PersonalCapitalSessionExpiredException:
             return False
+
+    def refresh_last_server_change_id(self):
+        resp = self.api_request('post', 'api/login/querySession')
+        last_server_change_id = resp.get('spHeader', {}).get('SP_HEADER_VERSION', None)
+        if last_server_change_id:
+            self._last_server_change_id = last_server_change_id
 
     def get_transactions(self, start_date='2007-01-01', end_date='2030-01-01') -> List[Mapping]:
         resp = self.api_request('post',
@@ -122,6 +129,8 @@ class PersonalCapital():
 
         if self._use_cookies_cache:
             self._cache_cookies()
+
+        self.refresh_last_server_change_id()
 
         return self
 
