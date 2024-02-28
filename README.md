@@ -1,6 +1,6 @@
-# [Experimental] Personal Capital (Empower) API
+# Personal Capital (Empower) API
 
-A minimalistic wrapper to Personal Capital / Empower Dashboard API. Currently work in progress / experimental. It may not work for you.
+A minimalistic wrapper to Personal Capital / Empower Dashboard API.
 
 ## Requirements
 
@@ -9,7 +9,7 @@ A minimalistic wrapper to Personal Capital / Empower Dashboard API. Currently wo
 
 ## Installation
 ```
-python -m pip install git+https://github.com/xinlu/personal_capital_api.git@main
+python -m pip install git+https://github.com/xinluh/personal_capital_api.git@main
 ```
 Or add to `requirements.txt` or `pyproject.toml` etc. depending on your package manager.
 
