@@ -4,6 +4,7 @@ import getpass
 import json
 import re
 import os
+import platform
 from pathlib import Path
 import pickle
 from typing import Mapping, List
@@ -17,7 +18,7 @@ _USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.3
 _ROOT_URL = 'https://home.personalcapital.com'
 
 # Caching cookies from successful login session to avoid 2-factor verification in the future
-_CACHE_PATH = '~/.cache/personal_capital_api'
+_CACHE_PATH = os.path.join(os.getenv('LOCALAPPDATA'), 'PersonalCapitalApi', 'Cache') if platform.system() == 'Windows' else '~/.cache/personal_capital_api'
 _CACHE_VERSION = 1
 
 

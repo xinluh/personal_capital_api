@@ -24,7 +24,7 @@ pc = PersonalCapital().login(email, password, auth_method='sms')
 ```
 You should run this at least once interactively so you can enter the 2-factor code manually.
 
-After the first successful login, the cookies will be cached in `~/.cache/personal_capital_api` and reloaded automatically next time, so likely you will only deal with 2-factor prompt only once. If you don't want this behavior, initiate the class with `PersonalCapital(use_cookies_cache=False)`.
+After the first successful login, the cookies will be cached in `~/.cache/personal_capital_api` (or `C:\Users\Username\AppData\Local\PersonalCapitalApi\Cache` on Windows) and reloaded automatically next time, so likely you will only deal with 2-factor prompt only once. If you don't want this behavior, initiate the class with `PersonalCapital(use_cookies_cache=False)`.
 
 ### Get account information
 ```python
