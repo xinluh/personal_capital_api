@@ -78,7 +78,11 @@ class PersonalCapital():
     def get_transactions(self, start_date='2007-01-01', end_date='2030-01-01') -> List[Mapping]:
         resp = self.api_request('post',
                                 path='/api/transaction/getUserTransactions',
-                                data={'startDate': start_date, 'endDate': end_date})
+                                data={
+                                    'startDate': start_date, 
+                                    'endDate': end_date,
+                                    'apiClient': 'WEB',
+                                })
 
         return resp['spData']['transactions']
 
