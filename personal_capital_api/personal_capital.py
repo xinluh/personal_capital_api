@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 _USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36'
-_ROOT_URL = 'https://home.personalcapital.com'
+_API_ROOT_URL = 'https://pc-api.empower-retirement.com'
 
 # Caching cookies from successful login session to avoid 2-factor verification in the future
 _CACHE_PATH = os.path.join(os.getenv('LOCALAPPDATA'), 'PersonalCapitalApi', 'Cache') if platform.system() == 'Windows' else '~/.cache/personal_capital_api'
@@ -39,7 +39,7 @@ class PersonalCapital():
     def api_request(self, method, path, data={}) -> Mapping:
         response = self.session.request(
             method=method,
-            url=os.path.join(_ROOT_URL, path.lstrip('/')),
+            url=os.path.join(_API_ROOT_URL, path.lstrip('/')),
             data={**data, "csrf": self._csrf, "apiClient": 'WEB', "lastServerChangeId": self._last_server_change_id})
         resp_txt = response.text
 
@@ -91,40 +91,52 @@ class PersonalCapital():
                  auth_method='sms',
                  get_two_factor_code_func=lambda: getpass.getpass("Enter 2 factor code: ")) -> 'PersonalCapital':
         """
-        Login using API calls. If this doesn't work, try login_via_browser().
+        Log in to Personal Capital via api
 
         You should run this function interactively at least once so you can supply the 2 factor authentication
-        code interactively.
+        code interactively. After successful login, the cookies cached to the OS specific setting path (see _CACHE_PATH),
+        so the next run should not need to 2 factor authenticate again.
         """
-        if auth_method not in ('sms', 'email'):
+
+        if auth_method not in ('sms'):
             raise ValueError(f'Auth method {auth_method} is not supported')
 
-        self._csrf = re.search("csrf *= *'([-a-z0-9]+)'", self.session.get(_ROOT_URL).text).groups()[0]
+        auth_resp = self.session.post(os.path.join(_API_ROOT_URL, 'api/auth/multiauth/noauth/authenticate'), json={
+            'deviceFingerPrint':'9076b6df374f42acda3bd466324cf735',
+            'userAgent': _USER_AGENT,
+            'language':'en-US',
+            'hasLiedLanguages':False,
+            'hasLiedResolution':False,
+            'hasLiedOs':False,
+            'hasLiedBrowser':False,
+            'userName': email,
+            'password': password,
+            'flowName':'mfa',
+            'accu':'MYERIRA'
+        }).json()
 
-        resp = self.api_request('post', '/api/login/identifyUser', {'username': email})
+        if 'destinationUrl' not in auth_resp:
+            raise RuntimeError(f'Login auth request seems to have failed: {auth_resp}')
 
-        # update to the new csrf
-        self._csrf = resp.get('spHeader', {}).get('csrf')
+        auth_token_resp = self.session.post(
+            os.path.join(_API_ROOT_URL, auth_resp['destinationUrl'].lstrip('/')),
+            data={'idToken': auth_resp['idToken']}).json()
+        self._csrf = auth_token_resp.get('spHeader', {}).get('csrf')
 
-        if resp.get('spHeader', {}).get('authLevel') != 'USER_REMEMBERED':
-            self.api_request('post', '/api/credential/challenge' + ('Sms' if auth_method == 'sms' else 'Email'), {
-                "challengeReason": "DEVICE_AUTH",
-                "challengeMethod": "OP",
-                "bindDevice": "false",
-                "challengeType": 'challengeSMS' if auth_method == 'sms' else 'challengeEmail',
+        if not auth_token_resp.get('spHeader', {}).get('success'):
+            sms_challenge_resp = self.api_request('post', 'api/credential/challengeSmsFreemium', data={
+                'challengeReason': 'DEVICE_AUTH',
+                'challengeMethod': 'OP',
+                'bindDevice': False
             })
 
             two_factor_code = get_two_factor_code_func()
-
-            self.api_request('post', '/api/credential/authenticateSms' if auth_method == 'sms' else '/api/credential/authenticateEmailByCode', {
-                "challengeReason": "DEVICE_AUTH",
-                "challengeMethod": "OP",
-                "bindDevice": "false",
-                "code": two_factor_code,
+            sms_resp = self.api_request('post', 'api/credential/authenticateSmsFreemium', data={
+                'code': two_factor_code,
+                'challengeReason': 'DEVICE_AUTH',
+                'challengeMethod': 'OP',
+                'bindDevice': False
             })
-
-        self.api_request('post', '/api/credential/authenticatePassword', {
-            "bindDevice": "true", "deviceName": "API script", "passwd": password,})
 
         self._email = email
 
@@ -132,128 +144,6 @@ class PersonalCapital():
             self._cache_cookies()
 
         self.refresh_last_server_change_id()
-
-        return self
-
-    def login_via_browser(self, email, password,
-              get_two_factor_code_func=lambda: getpass.getpass("Enter 2 factor code sent to your text: "),
-              debug=False) -> 'PersonalCapital':
-        """
-        Login by emulating a brower. The regular login() should work faster with less dependency, but this may be helpful
-        if login() doesn't work.
-
-        Depends on Selenium and ChromeDriver.
-
-        You should run this function interactively at least once so you can supply the 2 factor authentication
-        code interactively.
-
-        If debug=True, a test browser will open up to let you watch the login process in realtime.
-        You can access the webdriver used at `PersonalCapital._driver` for debugging to see the current page.
-        A few useful functions: `PersonalCapital._driver.page_source`, `PersonalCapital._driver.get_screenshot_as_file('/tmp/test.png')`
-
-        """
-        from selenium import webdriver
-        from selenium.common.exceptions import (
-            ElementNotVisibleException,
-            NoSuchElementException,
-            ElementNotInteractableException,
-            StaleElementReferenceException
-        )
-
-        options = webdriver.ChromeOptions()
-        if not debug:
-            options.add_argument('headless')
-
-        driver = webdriver.Chrome(chrome_options=options)
-        if debug:
-            self._driver = driver
-        driver.set_window_size(1280, 1280)
-        driver.implicitly_wait(0)
-
-        driver.get(_ROOT_URL)
-        for k, v in self.session.cookies.get_dict().items():
-            driver.add_cookie({'name': k, 'value': v})
-
-        def wait_and_click_by_xpath(xpath, timeout=10, check_freq=1):
-            """ more debug message and finer control over selenium's wait functionality """
-            for _ in range(timeout // check_freq):
-                if debug:
-                    logger.info('Waiting for xpath=[{}] to be clickable'.format(xpath))
-
-                try:
-                    element = driver.find_element_by_xpath(xpath)
-
-                    if element.is_displayed and element.is_enabled:
-                        element.click()
-                        return element
-                except (NoSuchElementException, ElementNotVisibleException, StaleElementReferenceException, ElementNotInteractableException):
-                    pass
-                time.sleep(check_freq)
-
-            driver.get_screenshot_as_file('/tmp/personal_capital_error.png')
-            raise Exception('Fail to find xpath=[{}] to click on'.format(xpath))
-
-        def set_input_text(element, text):
-            """ this is a lot faster than just element.send_keys(...) """
-            driver.execute_script('arguments[0].value = arguments[1]', element, text)
-
-        logger.info('Waiting for login page to load...')
-
-        try:
-            set_input_text(wait_and_click_by_xpath('//*[@id="form-email"]//input[@name="username"]'), email)
-            wait_and_click_by_xpath('//button[@name="continue"]')
-        except Exception:
-            driver.get_screenshot_as_file('/tmp/personal_capital_error.png')
-            raise
-
-        self._csrf = None
-        logger.info('Logging in...')
-        for num_try in range(10):
-            logger.debug(f'Login loop #{num_try}')
-
-            if self._csrf:
-                break
-
-            # try 2 factor
-            try:
-                driver.find_element_by_xpath('//button[@value="challengeSMS"]').click()
-                logger.info('Waiting for two factor code...')
-                two_factor_code = get_two_factor_code_func()
-                logger.info(f'Sending two factor code: {two_factor_code}')
-                wait_and_click_by_xpath('//form[@id="form-challengeResponse-sms"]//input[@name="code"]').send_keys(two_factor_code)
-                wait_and_click_by_xpath('//form[@id="form-challengeResponse-sms"]//button[@type="submit"]').click()
-                time.sleep(2)
-            except (NoSuchElementException, ElementNotVisibleException, StaleElementReferenceException, ElementNotInteractableException):
-                pass
-
-            try:
-                set_input_text(driver.find_element_by_xpath('//form[@id="form-password"]//input[@name="passwd"]'), password)
-                # wait_and_click_by_xpath('//input[@name="deviceName"]').send_keys('Chrome Dev')
-                wait_and_click_by_xpath('//form[@id="form-password"]//button[@name="sign-in"]')
-                time.sleep(2)
-            except (NoSuchElementException, ElementNotVisibleException, StaleElementReferenceException, ElementNotInteractableException):
-                pass
-
-            try:
-                if driver.current_url.endswith('dashboard'):
-                    self._csrf = re.search("csrf *= *'([-a-z0-9]+)'", driver.page_source).groups()[0]
-                    self._email = email
-            except:
-                pass
-
-            logger.debug('Current page title: ' + driver.title)
-
-        for cookie_json in driver.get_cookies():
-            self.session.cookies.set(**{k: v for k, v in cookie_json.items()
-                                        if k not in ['httpOnly', 'expiry', 'expires', 'domain', 'sameSite']})
-
-        if self._use_cookies_cache:
-            self._cache_cookies()
-
-        if not debug:
-            driver.close()
-            time.sleep(1)
-            driver.quit()
 
         return self
 
