@@ -75,10 +75,11 @@ class PersonalCapital():
         if last_server_change_id:
             self._last_server_change_id = last_server_change_id
 
-    def get_transactions(self, start_date='2007-01-01', end_date='2030-01-01') -> List[Mapping]:
+    def get_transactions(self, start_date='2007-01-01', end_date='2030-01-01', user_account_ids=[]) -> List[Mapping]:
+        user_account_ids_str = '[' + ','.join((str(i) for i in user_account_ids)) + ']'
         resp = self.api_request('post',
                                 path='/api/transaction/getUserTransactions',
-                                data={'startDate': start_date, 'endDate': end_date})
+                                data={'startDate': start_date, 'endDate': end_date, 'userAccountIds': user_account_ids_str})
 
         return resp['spData']['transactions']
 
